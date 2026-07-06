@@ -8,7 +8,7 @@ from aiogram.filters import Command
 logging.basicConfig(level=logging.INFO)
 
 # ================= НАСТРОЙКА БОТА =================
-API_TOKEN = '8724651736:AAGaV6oJmh12o1PQ-NQ4Dj4A4V-I_hcjO7o'
+API_TOKEN = '8724651736:AAGaV6oJmh12o1PQ-NQ4Dj4A4V-I_hcj07o'
 ADMIN_ID = 6597940034
 MY_TG_LINK = 'https://t.me/KsGpv'  # Твоя ссылка на профиль
 DB_NAME = 'minecraft_business.db'
@@ -17,7 +17,6 @@ DB_NAME = 'minecraft_business.db'
 bot = Bot(token=API_TOKEN)
 dp = Dispatcher()
 
-# Словарь текстовых рангов для ручного переключения
 RANKS_DICT = {
     "1": "🟢 [Стажёр]",
     "2": "🔵 [Мл. Курьер]",
@@ -26,7 +25,6 @@ RANKS_DICT = {
     "5": "🟣 [Гл. Курьер]"
 }
 
-# Функция для определения ранга
 def determine_rank(orders_count: int, custom_rank: str = None) -> str:
     if custom_rank and custom_rank != "None":
         return custom_rank
@@ -36,7 +34,6 @@ def determine_rank(orders_count: int, custom_rank: str = None) -> str:
     if orders_count >= 5:  return "🔵 [Мл. Курьер]"
     return "🟢 [Стажёр]"
 
-# Инициализация базы данных
 async def init_db():
     async with aiosqlite.connect(DB_NAME) as db:
         await db.execute('''
@@ -69,7 +66,16 @@ async def init_db():
         )''')
         await db.commit()
 
-# Клавиатуры
+# Функция, которая будет каждые 15 минут отправлять тебе сообщение, чтобы бот на Render не засыпал
+async def send_ping_message():
+    await asyncio.sleep(10) # небольшая пауза при запуске
+    while True:
+        try:
+            await bot.send_message(chat_id=ADMIN_ID, text="🤖 Бот работает стабильно! Проверка каждые 15 минут.")
+        except Exception as e:
+            logging.error(f"Ошибка пинга: {e}")
+        await asyncio.sleep(900) # 900 секунд = 15 минут
+
 def get_order_keyboard(order_id: int):
     return InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(text="Забрать заказ 📦", callback_data=f"take_{order_id}")
@@ -87,6 +93,11 @@ def get_admin_keyboard(order_id: int, courier_id: int):
         [InlineKeyboardButton(text="✅ Подтвердить и выплатить", callback_data=f"adm_confirm_{order_id}_{courier_id}")],
         [InlineKeyboardButton(text="❌ Отклонить", callback_data=f"adm_reject_{order_id}_{courier_id}")]
     ])
+
+def get_admin_cancel_keyboard(order_id: int):
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="❌ Отменить этот заказ", callback_data=f"boss_force_cancel_{order_id}")
+    ]])
 
 def get_fire_keyboard(user_id: int):
     return InlineKeyboardMarkup(inline_keyboard=[[
@@ -108,6 +119,7 @@ WELCOME_TEXT = (
 async def cmd_start(message: Message):
     user_id = message.from_user.id
     username = message.from_user.username or f"id_{user_id}"
+    is_new = False
     
     async with aiosqlite.connect(DB_NAME) as db:
         async with db.execute("SELECT status FROM users WHERE user_id = ?", (user_id,)) as cursor:
@@ -118,7 +130,18 @@ async def cmd_start(message: Message):
             if not user:
                 await db.execute("INSERT INTO users (user_id, username) VALUES (?, ?)", (user_id, username))
                 await db.commit()
+                is_new = True
+                
     await message.answer(WELCOME_TEXT, parse_mode="Markdown")
+    
+    if is_new:
+        try:
+            await bot.send_message(
+                chat_id=ADMIN_ID, 
+                text=f"🔔 **Новый пользователь в боте!**\n👤 Ник: @{username}\n🆔 ID: `{user_id}`",
+                parse_mode="Markdown"
+            )
+        except: pass
 
 @dp.message(Command("profile"))
 async def cmd_profile(message: Message):
@@ -131,7 +154,6 @@ async def cmd_profile(message: Message):
                 if status == "Уволен": emoji = "❌"
                 rank = determine_rank(completed_orders, custom_rank)
                 
-                # Проверка лимита на вывод ресурсов
                 withdraw_status = "✅ Доступен Боссу!" if balance >= 15.0 else f"❌ Недоступен (нужно еще {round(15.0 - balance, 2)} 🪙)"
                 
                 await message.answer(f"📋 *Твой профиль курьера:*\n\n"
@@ -147,7 +169,6 @@ async def cmd_profile(message: Message):
             else:
                 await message.answer("❌ Сначала пропиши /start")
 
-# Топ курьеров
 @dp.message(Command("top"))
 async def cmd_top(message: Message):
     async with aiosqlite.connect(DB_NAME) as db:
@@ -164,7 +185,6 @@ async def cmd_top(message: Message):
         text += f"{i}. @{row[0]} — *{row[1]} зак.* | {rank_title} | ({round(row[2], 2)} 🪙)\n"
     await message.answer(text, parse_mode="Markdown")
 
-# Рассылка заказа админом: /order 16 грибов | 0.25
 @dp.message(Command("order"))
 async def cmd_send_order(message: Message):
     if message.from_user.id != ADMIN_ID: return
@@ -203,7 +223,6 @@ async def cmd_send_order(message: Message):
         await db.commit()
     await message.answer(f"🚀 Заказ №{order_id} отправлен! Цена: {price} 🪙")
 
-# Курьер забирает заказ
 @dp.callback_query(F.data.startswith("take_"))
 async def process_take_order(callback: CallbackQuery):
     order_id = int(callback.data.split("_")[1])
@@ -211,6 +230,12 @@ async def process_take_order(callback: CallbackQuery):
     username = callback.from_user.username or f"id_{user_id}"
     
     async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute("SELECT order_id FROM orders WHERE taken_by_id = ? AND status = 'В работе'", (user_id,)) as active_cursor:
+            has_active = await active_cursor.fetchone()
+            if has_active:
+                await callback.answer("❌ Ты не можешь брать несколько заказов одновременно! Сначала сдай или отмени текущий.", show_alert=True)
+                return
+
         async with db.execute("SELECT status, order_text, price, taken_by_name FROM orders WHERE order_id = ?", (order_id,)) as cursor:
             res = await cursor.fetchone()
             if not res: return
@@ -226,7 +251,11 @@ async def process_take_order(callback: CallbackQuery):
         await callback.answer("✅ Ты успешно забрал заказ!", show_alert=True)
         
         try:
-            await bot.send_message(chat_id=ADMIN_ID, text=f"📦 Курьер @{username} забрал заказ №{order_id} («{order_text}») за {price} 🪙")
+            await bot.send_message(
+                chat_id=ADMIN_ID, 
+                text=f"📦 Курьер @{username} забрал заказ №{order_id} («{order_text}») за {price} 🪙",
+                reply_markup=get_admin_cancel_keyboard(order_id)
+            )
         except: pass
 
         async with db.execute("SELECT user_id, message_id FROM order_messages WHERE order_id = ?", (order_id,)) as m_cursor:
@@ -241,7 +270,33 @@ async def process_take_order(callback: CallbackQuery):
             reply_markup=get_courier_keyboard(order_id), parse_mode="Markdown"
         )
 
-# Отказ от заказа
+@dp.callback_query(F.data.startswith("boss_force_cancel_"))
+async def process_boss_force_cancel(callback: CallbackQuery):
+    if callback.from_user.id != ADMIN_ID: return
+    order_id = int(callback.data.split("_")[3])
+    
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute("SELECT taken_by_id, order_text, price FROM orders WHERE order_id = ?", (order_id,)) as cursor:
+            res = await cursor.fetchone()
+            if not res: return
+            courier_id, order_text, price = res
+            
+        await db.execute("UPDATE orders SET status = 'Свободен', taken_by_id = NULL, taken_by_name = NULL WHERE order_id = ?", (order_id,))
+        await db.commit()
+        
+    await callback.message.edit_text(f"⚠️ Вы принудительно отменили заказ №{order_id} и вернули его в список!")
+    
+    if courier_id:
+        try: await bot.send_message(chat_id=courier_id, text=f"⚠️ Босс отменил твой заказ №{order_id} («{order_text}»), так как он долго не выполнялся. Заказ возвращен в общую ленту.")
+        except: pass
+
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute("SELECT user_id, message_id FROM order_messages WHERE order_id = ?", (order_id,)) as m_cursor:
+            messages = await m_cursor.fetchall()
+        for uid, msg_id in messages:
+            try: await bot.edit_message_text(chat_id=uid, message_id=msg_id, text=f"🔄 *ЗАКАЗ №{order_id} СНОВА ДОСТУПЕН:*\n📦 {order_text}\n💰 Награда: {price} 🪙", reply_markup=get_order_keyboard(order_id), parse_mode="Markdown")
+            except: pass
+
 @dp.callback_query(F.data.startswith("cancel_"))
 async def process_courier_cancel(callback: CallbackQuery):
     order_id = int(callback.data.split("_")[1])
@@ -268,7 +323,6 @@ async def process_courier_cancel(callback: CallbackQuery):
             try: await bot.edit_message_text(chat_id=uid, message_id=msg_id, text=f"🔄 *ЗАКАЗ №{order_id} СНОВА ДОСТУПЕН:*\n📦 {order_text}\n💰 Награда: {price} 🪙", reply_markup=get_order_keyboard(order_id), parse_mode="Markdown")
             except: pass
 
-# Доставка
 @dp.callback_query(F.data.startswith("done_"))
 async def process_courier_done(callback: CallbackQuery):
     order_id = int(callback.data.split("_")[1])
@@ -289,7 +343,6 @@ async def process_courier_done(callback: CallbackQuery):
         parse_mode="Markdown"
     )
 
-# Подтверждение Боссом
 @dp.callback_query(F.data.startswith("adm_"))
 async def process_admin_decision(callback: CallbackQuery):
     if callback.from_user.id != ADMIN_ID: return
@@ -321,7 +374,6 @@ async def process_admin_decision(callback: CallbackQuery):
             try: await bot.send_message(chat_id=courier_id, text=f"❌ Босс отклонил выполнение заказа №{order_id}. Что-то не так с ресурсами в бочке.")
             except: pass
 
-# Управление балансом
 @dp.message(Command("pay"))
 async def cmd_pay(message: Message):
     if message.from_user.id != ADMIN_ID: return
@@ -361,44 +413,44 @@ async def cmd_pay(message: Message):
                 return
         await message.answer(f"❌ Курьер {args[1]} не найден.")
 
-# Назначение ранга
 @dp.message(Command("setrank"))
 async def cmd_set_rank(message: Message):
     if message.from_user.id != ADMIN_ID: return
-    args = message.text.split()
+    args = message.text.split(maxsplit=2)
     if len(args) < 3:
-        await message.answer("❌ Пиши правильно:\n`/setrank @ник номер`")
+        await message.answer("❌ Пиши правильно:\n`/setrank @ник номер_или_название`")
         return
         
-    target = args[1].replace("@", "").lower()
-    rank_num = args[2]
+    target = args[1].replace("@", "").lower().strip()
+    rank_input = args[2].strip()
     
-    if rank_num == "0":
+    if rank_input == "0":
         rank_val = "None"
         rank_display = "Авто-расчет по заказам"
-    elif rank_num in RANKS_DICT:
-        rank_val = RANKS_DICT[rank_num]
+    elif rank_input in RANKS_DICT:
+        rank_val = RANKS_DICT[rank_input]
         rank_display = rank_val
     else:
-        return
+        rank_val = rank_input
+        rank_display = rank_val
         
     async with aiosqlite.connect(DB_NAME) as db:
         async with db.execute("SELECT user_id, username FROM users WHERE status != 'Уволен'") as cursor:
             rows = await cursor.fetchall()
             
         for row in rows:
-            if row[1] and row[1].lower() == target:
+            if row[1] and row[1].lower().strip() == target:
                 uid, name = row
                 await db.execute("UPDATE users SET custom_rank = ? WHERE user_id = ?", (rank_val, uid))
                 await db.commit()
                 await message.answer(f"🎖️ Для курьера @{name} установлен ранг: *{rank_display}*", parse_mode="Markdown")
                 try:
-                    user_msg = f"🎖️ Босс изменил твой ранг на: *{determine_rank(0, rank_val)}*" if rank_num != "0" else "🔄 Авто-расчет ранга возвращен!"
+                    user_msg = f"🎖️ Босс изменил твой ранг на: *{rank_display}*" if rank_input != "0" else "🔄 Авто-расчет ранга возвращен!"
                     await bot.send_message(chat_id=uid, text=user_msg, parse_mode="Markdown")
                 except: pass
                 return
+        await message.answer(f"❌ Курьер {args[1]} не найден.")
 
-# Просмотр курьеров
 @dp.message(Command("couriers"))
 async def cmd_couriers(message: Message):
     if message.from_user.id != ADMIN_ID: return
@@ -416,22 +468,6 @@ async def cmd_couriers(message: Message):
                 text = f"• @{name} | Ранг: {rank_title} ({ord_c} зак.) | Кошелек: *{round(bal, 2)} 🪙* | {status}"
                 await message.answer(text, reply_markup=get_fire_keyboard(uid), parse_mode="Markdown")
 
-# Защита обновлений БД
-@dp.message(Command("update_db"))
-async def cmd_update_db(message: Message):
-    if message.from_user.id != ADMIN_ID: return
-    args = message.text.split()
-    if len(args) < 2: return
-    col_name = args[1]
-    async with aiosqlite.connect(DB_NAME) as db:
-        try:
-            await db.execute(f"ALTER TABLE users ADD COLUMN {col_name} TEXT DEFAULT 'None'")
-            await db.commit()
-            await message.answer(f"✅ Колонка `{col_name}` добавлена!")
-        except Exception as e:
-            await message.answer(f"❌ Ошибка: {e}")
-
-# Кнопка Уволить
 @dp.callback_query(F.data.startswith("fire_"))
 async def process_fire_courier(callback: CallbackQuery):
     if callback.from_user.id != ADMIN_ID: return
@@ -441,7 +477,6 @@ async def process_fire_courier(callback: CallbackQuery):
         await db.commit()
     await callback.message.edit_text("❌ Курьер успешно уволен!")
 
-# Выдача варна
 @dp.message(Command("warn"))
 async def cmd_warn(message: Message):
     if message.from_user.id != ADMIN_ID: return
@@ -461,7 +496,6 @@ async def cmd_warn(message: Message):
                 except: pass
                 break
 
-# Снятие варна
 @dp.message(Command("unwarn"))
 async def cmd_unwarn(message: Message):
     if message.from_user.id != ADMIN_ID: return
@@ -479,7 +513,6 @@ async def cmd_unwarn(message: Message):
                 await message.answer(f"✅ Снят варн с @{row[2]}. Варны: {new_warns}/3")
                 break
 
-# Назначение отпуска
 @dp.message(Command("rest"))
 async def cmd_rest(message: Message):
     if message.from_user.id != ADMIN_ID: return
@@ -498,7 +531,6 @@ async def cmd_rest(message: Message):
                 await message.answer(f"🌴 Статус курьера @{name} изменен на: {new_status}")
                 break
 
-# Настройка склада и напарника
 @dp.message(Command("setwh"))
 async def cmd_set_warehouse(message: Message):
     if message.from_user.id != ADMIN_ID: return
@@ -515,15 +547,18 @@ async def cmd_set_warehouse(message: Message):
                 await message.answer(f"✅ Для @{row[1]} настроен склад {wh_name}")
                 break
 
-# ================= ГЛАВНЫЙ ЗАПУСК ДЛЯ RENDER =================
 async def main():
     await init_db()
+    # Запуск таймера пинга
+    asyncio.create_task(send_ping_message())
     
+    from aiogram.client.telegram import TelegramAPIServer
+    from aiogram.client.session.aiohttp import AiohttpSession
+    custom_server = TelegramAPIServer.from_base("https://api.telegram-proxy.org")
+    session = AiohttpSession()
     global bot
-    # На Render.com интернет свободный, подключаемся напрямую к Telegram без прокси!
-    bot = Bot(token=API_TOKEN)
-    
-    print("Бот успешно запущен на сервере!")
+    bot = Bot(token=API_TOKEN, session=session, api_server=custom_server)
+    print("Бот успешно обновлен!")
     await dp.start_polling(bot)
 
 if __name__ == '__main__':
