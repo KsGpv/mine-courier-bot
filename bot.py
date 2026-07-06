@@ -8,7 +8,7 @@ from aiogram.filters import Command
 logging.basicConfig(level=logging.INFO)
 
 # ================= НАСТРОЙКА БОТА =================
-API_TOKEN = '8724651736:AAGaV6oJmh12o1PQ-NQ4Dj4A4V-I_hcj07o'
+API_TOKEN = '8724651736:AAGaV6oJmh12o1PQ-NQ4Dj4A4V-I_hcjO7o'
 ADMIN_ID = 6597940034
 MY_TG_LINK = 'https://t.me/KsGpv'  # Твоя ссылка на профиль
 DB_NAME = 'minecraft_business.db'
